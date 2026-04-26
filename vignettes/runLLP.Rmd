@@ -1,0 +1,223 @@
+---
+title: "Log-Likelihood Profiling with runLLP()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Log-Likelihood Profiling with runLLP()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4
+)
+```
+
+## Introduction
+
+Wald confidence intervals — computed as estimate ± 1.96 × SE — rest on the assumption
+that the likelihood surface is quadratic near its maximum.  For non-linear mixed-effects
+models this assumption is often violated, especially for parameters that are near a
+boundary or whose profile is asymmetric (e.g., variance components, steep absorption
+rate constants).
+
+Log-likelihood profiling (Beal 1984; PsN `llp`) avoids this by tracing the actual
+likelihood surface.  For each parameter in turn, the remaining parameters are
+re-estimated at a grid of fixed values and the change in OFV (ΔOFV) is recorded.  The
+95 % confidence bound is the parameter value at which
+
+$$\Delta\text{OFV} = \chi^2_{0.95,1} \approx 3.84$$
+
+`runLLP()` implements this algorithm for `nlmixr2` FOCE-I fits.  It supports:
+
+* structural fixed effects (thetas) and residual-error thetas (e.g. `add.sd`)
+* omega diagonal variance parameters (via `which = "eta.X"`)
+* parallel execution via the `future` / `future.apply` packages
+
+---
+
+## Example: theophylline single-dose PK
+
+We use the built-in `nlmixr2data::theo_sd` dataset — 12 subjects after a single oral
+dose of theophylline.  The model is a one-compartment first-order absorption PK model
+with IIV on the absorption rate constant and additive residual error.
+
+```{r packages, message = FALSE}
+library(nlmixr2data)
+library(nlmixr2utils)
+library(nlmixr2llp)
+```
+
+### 1. Fit the base model
+
+```{r fit, message = FALSE, results = "hide"}
+one.compartment <- function() {
+  ini({
+    tka <- log(1.57) # log absorption rate constant
+    tcl <- log(2.72) # log clearance
+    tv <- fixed(log(31.5)) # log volume (fixed)
+    eta.ka ~ 0.6 # IIV on absorption
+    add.sd <- 0.7 # additive residual error SD
+  })
+  model({
+    ka <- exp(tka + eta.ka)
+    cl <- exp(tcl)
+    v <- exp(tv)
+    cp <- linCmt()
+    cp ~ add(add.sd)
+  })
+}
+
+fit <- nlmixr2(
+  one.compartment,
+  data    = nlmixr2data::theo_sd,
+  est     = "focei",
+  control = list(print = 0L)
+)
+```
+
+```{r fit-summary}
+fit$parFixedDf
+```
+
+---
+
+### 2. Combined theta and omega profile
+
+`runLLP()` accepts a character vector of parameter names via `which`.  Here we profile
+the two structural thetas (`tka`, `tcl`), the residual-error parameter (`add.sd`),
+and the omega diagonal (`eta.ka`) in a single worked example.  This keeps the
+vignette fast while still illustrating both parameter classes.
+
+`llpControl()` lets you tune the search.  The defaults are suitable for most
+situations; the key options are:
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `ofvIncrease` | `qchisq(0.95, 1)` ≈ 3.84 | Target ΔOFV for 95 % CI |
+| `normq` | 1.96 | Initial guess width = `normq × SE` |
+| `rseTheta` | 30 | Fallback RSE (%) when SE is unavailable |
+| `itermax` | 10 | Maximum iterations per bound |
+| `ofvtol` | 0.005 | Convergence tolerance on ΔOFV |
+| `workers` | `NULL` | Sequential; set > 1 for parallel |
+
+```{r profile-all}
+ctrl <- llpControl(
+  normq    = 1.96,
+  rseTheta = 30,
+  itermax  = 10,
+  ofvtol   = 0.005
+)
+
+prof_all <- runLLP(
+  fit,
+  which   = c("tka", "tcl", "add.sd", "eta.ka"),
+  control = ctrl
+)
+```
+
+Printing the result shows the 95 % CI bounds, the MLE, and an asymmetry ratio (upper
+half-width / lower half-width) for each parameter:
+
+```{r print-all}
+print(prof_all)
+```
+
+Extract the bounds as a matrix with `confint()`:
+
+```{r confint-all}
+confint(prof_all)
+```
+
+---
+
+### 3. Read theta and omega intervals
+
+For structural thetas and residual error, the profile output can be filtered to the
+rows of interest:
+
+```{r theta-bounds}
+confint(prof_all)[c("tka", "tcl", "add.sd"), , drop = FALSE]
+```
+
+Variance components often have highly asymmetric likelihood profiles because they are
+bounded below by zero.  `runLLP()` recognises omega diagonal parameters automatically
+when you pass the ETA name (for example, `"eta.ka"`):
+
+```{r omega-bounds}
+ci_omega <- confint(prof_all)["eta.ka", , drop = FALSE]
+ci_omega
+```
+
+Note that the lower bound is positive (variances cannot be negative) and the interval
+is noticeably asymmetric — Wald intervals would under-cover in this region.
+
+---
+
+### 4. Visualise the profiles
+
+`plot()` returns a `ggplot2` object with one panel per parameter.  The dashed
+horizontal line marks the ΔOFV target; the vertical lines mark the MLE and CI bounds.
+
+```{r plot-all, fig.cap = "Combined profile for all four parameters", fig.height = 5}
+plot(prof_all)
+```
+
+---
+
+### 5. Parallel profiling
+
+When many parameters need to be profiled, execution time can be reduced by running
+each parameter in a separate worker.  Install the optional `future` and `future.apply`
+packages and set `workers` in `llpControl()` when you need to spread parameter-wise
+profiling across multiple processes.  This is most useful for wide models with many
+parameters to profile, because each parameter can be handled independently.
+
+Sequential profiling (`workers = NULL` or `workers = 1`) does not require `future` or
+`future.apply`; increasing `workers` trades extra setup overhead for lower wall-clock
+time when the profiling workload is large enough.
+
+---
+
+## Working with the output
+
+`prof_all` is an `nlmixr2Profile` object that inherits from `data.frame`.  Each row
+corresponds to one model evaluation; the `Parameter` column identifies which parameter
+was being profiled, `OFV` is the objective function value, and `profileBound` (when
+non-`NA`) records the estimated CI bound for that row.
+
+```{r output-structure}
+head(prof_all[!is.na(prof_all$profileBound), c("Parameter", "OFV", "tka", "tcl", "add.sd", "eta.ka", "profileBound")])
+```
+
+Additional diagnostic information is stored as attributes:
+
+```{r attributes}
+# MLE values used as the reference point
+attr(prof_all, "mle")
+
+# Were any bounds near a parameter boundary?
+attr(prof_all, "nearBound")
+
+# Did any search hit the iteration limit?
+attr(prof_all, "hitMaxIter")
+
+# Upper / lower half-width ratio (> 1.3 triggers a warning)
+attr(prof_all, "intervalRatio")
+```
+
+---
+
+## References
+
+Beal, S.L. (1984). Population pharmacokinetic data and parameter estimation based on
+their first two statistical moments. *Drug Metabolism Reviews*, 15, 173–193.
+
+Lindbom, L., Ribbing, J., & Jonsson, E.N. (2004). Perl-speaks-NONMEM (PsN) — a Perl
+module for NONMEM related programming. *Computer Methods and Programs in Biomedicine*,
+75, 85–94.
+
+
