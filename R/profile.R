@@ -11,15 +11,14 @@
 #'
 #' The search will stop when either the OFV is within `ofvtol` of the desired
 #' OFV change or when the parameter is interpolating to more significant digits
-#' than specified in `paramDigits`.  The "llp" method uses the `profileLlp()`
-#' function.  See its help for more details.
+#' than specified in `paramDigits`. The `"llp"` method uses `runLLP()`.
 #'
 #' # Fixed points
 #'
 #' `method = "fixed"`
 #'
-#' Estimate the OFV for specific fixed values.  The "fixed" method uses the
-#' `profileFixed()` function.  See its help for more details.
+#' Estimate the OFV for specific fixed values. The `"fixed"` method uses
+#' `llpProfileFixed()`.
 #'
 #' @param fitted The fit model
 #' @param ... ignored
@@ -78,14 +77,9 @@ profile.nlmixr2FitCore <- function(
   method <- match.arg(method)
 
   if (method == "llp") {
-    lifecycle::deprecate_warn(
-      when = "5.1.0",
-      what = "profile(method = 'llp')",
-      with = "runLLP()"
-    )
     runLLP(fit = fitted, which = which, control = control, ...)
   } else if (method == "fixed") {
-    profileFixed(fitted = fitted, which = which, control = control)
+    llpProfileFixed(fitted = fitted, which = which, control = control)
   } else {
     stop("Invalid 'method': ", method) # nocov
   }
@@ -145,13 +139,13 @@ profileNlmixr2FitCoreRet <- function(fitted, which, fixedVal) {
 #' @inheritParams profile.nlmixr2FitCore
 #' @param which A data.frame with column names of parameters to fix and values
 #'   of the fitted value to fix (one row per set of parameters to estimate)
-#' @param control A list passed to `fixedControl()` (currently unused)
+#' @param control A list passed to `llpFixedControl()` (currently unused)
 #' @inherit profileNlmixr2FitCoreRet return
 #' @author Bill Denney (changed by Matt Fidler to take out R 4.1 specific code)
 #' @family Profiling
 #' @export
-profileFixed <- function(fitted, which, control = list()) {
-  control <- do.call(fixedControl, control)
+llpProfileFixed <- function(fitted, which, control = list()) {
+  control <- do.call(llpFixedControl, control)
   checkmate::assert_data_frame(
     which,
     types = "numeric",
@@ -161,13 +155,16 @@ profileFixed <- function(fitted, which, control = list()) {
   dplyr::bind_rows(lapply(
     X = seq_len(nrow(which)),
     FUN = function(idx, fitted) {
-      profileFixedSingle(fitted = fitted, which = which[idx, , drop = FALSE])
+      llpProfileFixedSingle(
+        fitted = fitted,
+        which = which[idx, , drop = FALSE]
+      )
     },
     fitted = fitted
   ))
 }
 
-#' @describeIn profileFixed Estimate the objective function value for a model
+#' @describeIn llpProfileFixed Estimate the objective function value for a model
 #'   while fixing a single set of defined parameter values (for use in parameter
 #'   profiling)
 #'
@@ -178,7 +175,7 @@ profileFixed <- function(fitted, which, control = list()) {
 #' @family Profiling
 #' @author Bill Denney (changed by Matt Fidler to take out R 4.1 specific code)
 #' @export
-profileFixedSingle <- function(fitted, which) {
+llpProfileFixedSingle <- function(fitted, which) {
   checkmate::assert_data_frame(
     which,
     types = "numeric",
@@ -220,11 +217,11 @@ profileFixedSingle <- function(fitted, which) {
 #' @returns A validated list of control options for fixed-value likelihood
 #'   profiling
 #' @family Profiling
-#' @seealso [profileFixed()]
+#' @seealso [llpProfileFixed()]
 #' @export
-fixedControl <- function() {
+llpFixedControl <- function() {
   ret <- list()
-  class(ret) <- "fixedControl"
+  class(ret) <- "llpFixedControl"
   ret
 }
 
@@ -242,56 +239,6 @@ llpExtractSE <- function(fit) {
     se[inDf] <- parDf[inDf, "SE"]
   }
   se
-}
-
-#' Profile confidence intervals with log-likelihood profiling
-#'
-#' @inheritParams profile.nlmixr2FitCore
-#' @param control A list passed to `llpControl()`
-#' @param which Either `NULL` to profile all parameters or a character vector of
-#'   parameters to estimate
-#' @return A data.frame with columns named "Parameter" (the parameter name(s)
-#'   that were fixed), OFV (the objective function value), and the current
-#'   estimate for each of the parameters.  In addition, if any boundary is
-#'   found, the OFV increase will be indicated by the absolute value of the
-#'   "profileBound" column and if that boundary is the upper or lower boundary
-#'   will be indicated by the "profileBound" column being positive or negative,
-#'   respectively.
-#' @family Profiling
-#' @export
-profileLlp <- function(fitted, which, control) {
-  control <- do.call(llpControl, control)
-
-  if (is.null(which)) {
-    which <- names(nlmixr2est::fixef(fitted))
-  } else {
-    checkmate::assert_subset(
-      x = which,
-      choices = names(nlmixr2est::fixef(fitted)),
-      empty.ok = FALSE
-    )
-  }
-
-  if (!is.null(names(control$rseTheta))) {
-    checkmate::assert_names(
-      names(control$rseTheta),
-      subset.of = names(nlmixr2est::fixef(fitted))
-    )
-    checkmate::assert_numeric(
-      control$rseTheta,
-      lower = 0,
-      any.missing = FALSE,
-      min.len = 1
-    )
-  }
-
-  results <- lapply(which, function(w) {
-    llpRunOneParameter(fitted = fitted, which = w, control = control)
-  })
-
-  raw <- dplyr::bind_rows(lapply(results, `[[`, "raw"))
-  rownames(raw) <- NULL
-  raw
 }
 
 # Side-aware next-value selection for LLP using quadratic interpolation with linear fallback.
@@ -451,7 +398,7 @@ optimProfile <- function(
     currentIter <- currentIter + 1L
     if (is.null(fixFn)) {
       dfWhich <- stats::setNames(data.frame(X = currentPar), nm = which)
-      fitResult <- profileFixedSingle(fitted = fitted, which = dfWhich)
+      fitResult <- llpProfileFixedSingle(fitted = fitted, which = dfWhich)
     } else {
       fitResult <- fixFn(currentPar)
     }
@@ -740,7 +687,7 @@ buildFixedOmegaModel <- function(fit, omegaName, fixOmegaVal) {
 }
 
 # Fix one omega diagonal, re-estimate, return a data.frame row (same format as
-# profileFixedSingle / profileNlmixr2FitCoreRet).
+# llpProfileFixedSingle / profileNlmixr2FitCoreRet).
 profileFixedOmegaSingle <- function(fitted, omegaName, fixOmegaVal, fitData) {
   cli::cli_inform("Profiling {omegaName} = {fixOmegaVal}")
   modelFn <- buildFixedOmegaModel(fitted, omegaName, fixOmegaVal)
@@ -887,9 +834,9 @@ llpRunOneOmega <- function(fitted, which, control) {
 #'   or profiling aborts with a clear error.
 #' @returns A validated list of control options for log-likelihood profiling
 #' @family Profiling
-#' @seealso [profileLlp()]
+#' @seealso [runLLP()]
 #' @export
-llpControl <- function(
+runLLPControl <- function(
   ofvIncrease = qchisq(0.95, df = 1),
   normq = 1.96,
   rseTheta = 30,
@@ -977,13 +924,13 @@ llpControl <- function(
       ),
       workers = workers
     )
-  class(ret) <- "llpControl"
+  class(ret) <- "runLLPControl"
   ret
 }
 
 #' @export
-rxUiDeparse.llpControl <- function(object, var) {
-  .default <- llpControl()
+rxUiDeparse.runLLPControl <- function(object, var) {
+  .default <- runLLPControl()
   .w <- nlmixr2est::.deparseDifferent(.default, object, "genRxControl")
   nlmixr2est::.deparseFinal(.default, object, .w, var)
 }
@@ -1171,8 +1118,8 @@ messageProfileComplete <- function(which, direction, msg) {
 #' @param fit An nlmixr2 fit object (nlmixr2FitCore).
 #' @param which Character vector of parameter names to profile.  `NULL`
 #'   profiles all v1-profileable fixed-effect parameters.
-#' @param control An `llpControl()` object or a named list of arguments to pass
-#'   to `llpControl()`.
+#' @param control An `runLLPControl()` object or a named list of arguments to pass
+#'   to `runLLPControl()`.
 #' @param ... Ignored.
 #' @return An `nlmixr2Profile` object (a `data.frame` subclass).  The
 #'   data.frame contents are backward-compatible with the previous plain
@@ -1182,13 +1129,13 @@ messageProfileComplete <- function(which, direction, msg) {
 #'   `ofvIncrease`.
 #' @family Profiling
 #' @export
-runLLP <- function(fit, which = NULL, control = llpControl(), ...) {
+runLLP <- function(fit, which = NULL, control = runLLPControl(), ...) {
   fitName <- tryCatch(deparse(substitute(fit)), error = function(e) {
     NA_character_
   })
 
-  if (!inherits(control, "llpControl")) {
-    control <- do.call(llpControl, control)
+  if (!inherits(control, "runLLPControl")) {
+    control <- do.call(runLLPControl, control)
   }
   checkmate::assert_class(fit, "nlmixr2FitCore")
 

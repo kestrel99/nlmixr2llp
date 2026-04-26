@@ -40,15 +40,14 @@ Perform likelihood profiling on nlmixr2 focei fits
 
 The search will stop when either the OFV is within \code{ofvtol} of the desired
 OFV change or when the parameter is interpolating to more significant digits
-than specified in \code{paramDigits}.  The "llp" method uses the \code{profileLlp()}
-function.  See its help for more details.
+than specified in \code{paramDigits}. The \code{"llp"} method uses \code{runLLP()}.
 }
 
 \section{Fixed points}{
 \code{method = "fixed"}
 
-Estimate the OFV for specific fixed values.  The "fixed" method uses the
-\code{profileFixed()} function.  See its help for more details.
+Estimate the OFV for specific fixed values. The \code{"fixed"} method uses
+\code{llpProfileFixed()}.
 }
 
 \examples{
@@ -86,11 +85,10 @@ proftka <- profile(fit, which = "tka")
 }
 \seealso{
 Other Profiling: 
-\code{\link{fixedControl}()},
-\code{\link{llpControl}()},
-\code{\link{profileFixed}()},
-\code{\link{profileLlp}()},
+\code{\link{llpFixedControl}()},
+\code{\link{llpProfileFixed}()},
 \code{\link{profileNlmixr2FitCoreRet}()},
-\code{\link{runLLP}()}
+\code{\link{runLLP}()},
+\code{\link{runLLPControl}()}
 }
 \concept{Profiling}

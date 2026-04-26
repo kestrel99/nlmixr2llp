@@ -4,7 +4,7 @@
 \alias{runLLP}
 \title{Profile confidence intervals using log-likelihood profiling}
 \usage{
-runLLP(fit, which = NULL, control = llpControl(), ...)
+runLLP(fit, which = NULL, control = runLLPControl(), ...)
 }
 \arguments{
 \item{fit}{An nlmixr2 fit object (nlmixr2FitCore).}
@@ -12,8 +12,8 @@ runLLP(fit, which = NULL, control = llpControl(), ...)
 \item{which}{Character vector of parameter names to profile.  \code{NULL}
 profiles all v1-profileable fixed-effect parameters.}
 
-\item{control}{An \code{llpControl()} object or a named list of arguments to pass
-to \code{llpControl()}.}
+\item{control}{An \code{runLLPControl()} object or a named list of arguments to pass
+to \code{runLLPControl()}.}
 
 \item{...}{Ignored.}
 }
@@ -30,11 +30,10 @@ Profile confidence intervals using log-likelihood profiling
 }
 \seealso{
 Other Profiling: 
-\code{\link{fixedControl}()},
-\code{\link{llpControl}()},
+\code{\link{llpFixedControl}()},
+\code{\link{llpProfileFixed}()},
 \code{\link{profile.nlmixr2FitCore}()},
-\code{\link{profileFixed}()},
-\code{\link{profileLlp}()},
-\code{\link{profileNlmixr2FitCoreRet}()}
+\code{\link{profileNlmixr2FitCoreRet}()},
+\code{\link{runLLPControl}()}
 }
 \concept{Profiling}

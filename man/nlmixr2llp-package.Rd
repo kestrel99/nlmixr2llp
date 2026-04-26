@@ -11,8 +11,8 @@ Log-likelihood profiling tools for nlmixr2 fits.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/nlmixr2/nlmixr2llp}
-  \item Report bugs at \url{https://github.com/nlmixr2/nlmixr2llp/issues}
+  \item \url{https://github.com/kestrel99/nlmixr2llp}
+  \item Report bugs at \url{https://github.com/kestrel99/nlmixr2llp/issues}
 }
 
 }

@@ -26,11 +26,10 @@ Give the output data.frame for a single model for profile.nlmixr2FitCore
 }
 \seealso{
 Other Profiling: 
-\code{\link{fixedControl}()},
-\code{\link{llpControl}()},
+\code{\link{llpFixedControl}()},
+\code{\link{llpProfileFixed}()},
 \code{\link{profile.nlmixr2FitCore}()},
-\code{\link{profileFixed}()},
-\code{\link{profileLlp}()},
-\code{\link{runLLP}()}
+\code{\link{runLLP}()},
+\code{\link{runLLPControl}()}
 }
 \concept{Profiling}

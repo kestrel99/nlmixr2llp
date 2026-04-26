@@ -92,7 +92,7 @@ the two structural thetas (`tka`, `tcl`), the residual-error parameter (`add.sd`
 and the omega diagonal (`eta.ka`) in a single worked example.  This keeps the
 vignette fast while still illustrating both parameter classes.
 
-`llpControl()` lets you tune the search.  The defaults are suitable for most
+`runLLPControl()` lets you tune the search.  The defaults are suitable for most
 situations; the key options are:
 
 | Argument | Default | Meaning |
@@ -105,7 +105,7 @@ situations; the key options are:
 | `workers` | `NULL` | Sequential; set > 1 for parallel |
 
 ```{r profile-all}
-ctrl <- llpControl(
+ctrl <- runLLPControl(
   normq    = 1.96,
   rseTheta = 30,
   itermax  = 10,
@@ -172,7 +172,7 @@ plot(prof_all)
 
 When many parameters need to be profiled, execution time can be reduced by running
 each parameter in a separate worker.  Install the optional `future` and `future.apply`
-packages and set `workers` in `llpControl()` when you need to spread parameter-wise
+packages and set `workers` in `runLLPControl()` when you need to spread parameter-wise
 profiling across multiple processes.  This is most useful for wide models with many
 parameters to profile, because each parameter can be handled independently.
 

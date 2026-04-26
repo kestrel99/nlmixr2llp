@@ -1,52 +1,79 @@
 library(nlmixr2utils)
 
-test_that("llpControl - Step 5 additions", {
+.cur <- loadNamespace("nlmixr2llp")
+
+test_that("legacy LLP function names are removed", {
+  exports <- getNamespaceExports("nlmixr2llp")
+  old_names <- c(
+    "fixedControl",
+    "llpControl",
+    "profileFixed",
+    "profileFixedSingle",
+    "profileLlp"
+  )
+  new_names <- c(
+    "llpFixedControl",
+    "runLLPControl",
+    "llpProfileFixed",
+    "llpProfileFixedSingle"
+  )
+
+  expect_setequal(intersect(old_names, exports), character(0))
+  expect_true(all(new_names %in% exports))
+  expect_false(exists("fixedControl", envir = .cur, inherits = FALSE))
+  expect_false(exists("llpControl", envir = .cur, inherits = FALSE))
+  expect_false(exists("profileFixed", envir = .cur, inherits = FALSE))
+  expect_false(exists("profileFixedSingle", envir = .cur, inherits = FALSE))
+  expect_false(exists("profileLlp", envir = .cur, inherits = FALSE))
+})
+
+test_that("runLLPControl - Step 5 additions", {
   # Defaults work
-  ctrl <- llpControl()
+  ctrl <- runLLPControl()
   expect_equal(ctrl$normq, 1.96)
   expect_equal(ctrl$rseTheta, 30)
   expect_null(ctrl$workers)
 
   # normq validated
-  expect_error(llpControl(normq = -1))
-  expect_error(llpControl(normq = Inf))
-  expect_error(llpControl(normq = NA_real_))
-  expect_silent(llpControl(normq = 0))
-  expect_silent(llpControl(normq = 2.576))
+  expect_error(runLLPControl(normq = -1))
+  expect_error(runLLPControl(normq = Inf))
+  expect_error(runLLPControl(normq = NA_real_))
+  expect_silent(runLLPControl(normq = 0))
+  expect_silent(runLLPControl(normq = 2.576))
 
   # rseTheta: unnamed scalar accepted
-  expect_silent(llpControl(rseTheta = 20))
-  expect_equal(llpControl(rseTheta = 20)$rseTheta, 20)
+  expect_silent(runLLPControl(rseTheta = 20))
+  expect_equal(runLLPControl(rseTheta = 20)$rseTheta, 20)
 
   # rseTheta: named vector accepted
-  ctrl_named <- llpControl(rseTheta = c(tka = 25, tcl = 15))
+  ctrl_named <- runLLPControl(rseTheta = c(tka = 25, tcl = 15))
   expect_equal(ctrl_named$rseTheta, c(tka = 25, tcl = 15))
 
   # rseTheta: unnamed vector length > 1 rejected
-  expect_error(llpControl(rseTheta = c(25, 15)))
+  expect_error(runLLPControl(rseTheta = c(25, 15)))
 
   # rseTheta: negative value rejected
-  expect_error(llpControl(rseTheta = -5))
-  expect_error(llpControl(rseTheta = c(tka = -5)))
+  expect_error(runLLPControl(rseTheta = -5))
+  expect_error(runLLPControl(rseTheta = c(tka = -5)))
 
   # workers: NULL (default)
-  expect_null(llpControl()$workers)
+  expect_null(runLLPControl()$workers)
 
   # workers: positive integer
-  expect_equal(llpControl(workers = 2L)$workers, 2L)
-  expect_equal(llpControl(workers = 2)$workers, 2L) # coerced to integer
+  expect_equal(runLLPControl(workers = 2L)$workers, 2L)
+  expect_equal(runLLPControl(workers = 2)$workers, 2L) # coerced to integer
 
   # workers: "auto"
-  expect_equal(llpControl(workers = "auto")$workers, "auto")
+  expect_equal(runLLPControl(workers = "auto")$workers, "auto")
 
   # workers: invalid values rejected
-  expect_error(llpControl(workers = 0))
-  expect_error(llpControl(workers = -1))
-  expect_error(llpControl(workers = "parallel"))
+  expect_error(runLLPControl(workers = 0))
+  expect_error(runLLPControl(workers = -1))
+  expect_error(runLLPControl(workers = "parallel"))
 
   # rxUiDeparse round-trips new fields
-  ctrl_modified <- llpControl(normq = 2.576, rseTheta = 20, workers = 2L)
-  deparsed <- rxUiDeparse.llpControl(ctrl_modified, "ctrl")
+  ctrl_modified <- runLLPControl(normq = 2.576, rseTheta = 20, workers = 2L)
+  deparsed <- rxUiDeparse.runLLPControl(ctrl_modified, "ctrl")
   expect_true(any(grepl("normq", deparsed)))
   expect_true(any(grepl("workers", deparsed)))
 })
@@ -654,7 +681,7 @@ test_that("profileNlmixr2FitCoreRet", {
   )
 })
 
-test_that("profileFixed", {
+test_that("llpProfileFixed", {
   # fix most of the parameters so that it estimates faster
   one.compartment <- function() {
     ini({
