@@ -615,7 +615,23 @@ llpOmegaNames <- function(fit) {
   omega_rows <- idf[
     is.na(idf$ntheta) & !is.na(idf$neta1) & idf$neta1 == idf$neta2,
   ]
-  omega_rows$name[!isTRUE(omega_rows$fix)]
+  omega_rows$name[!omega_rows$fix %in% TRUE]
+}
+
+# Derive per-subject count for chi-squared omega SE approximation.
+llpNSubjects <- function(fit) {
+  n <- tryCatch(as.integer(fit$nsub), error = function(e) NULL)
+  if (!is.null(n) && length(n) == 1L && !is.na(n)) {
+    return(n)
+  }
+  dat <- tryCatch(fit$origData, error = function(e) NULL)
+  if (is.null(dat)) {
+    dat <- tryCatch(nlmixr2est::getData(fit), error = function(e) NULL)
+  }
+  if (!is.null(dat) && "ID" %in% names(dat)) {
+    return(length(unique(dat$ID)))
+  }
+  cli::cli_abort("Cannot determine subject count from {.arg fit}.")
 }
 
 # Wishart chi-squared approximation for omega diagonal SE.
@@ -623,7 +639,7 @@ llpOmegaNames <- function(fit) {
 llpOmegaSE <- function(fit) {
   omNames <- llpOmegaNames(fit)
   idf <- fit$iniDf
-  n_sub <- tryCatch(.sirNSubjects(fit), error = function(e) NA_integer_) # nolint: object_usage_linter.
+  n_sub <- tryCatch(llpNSubjects(fit), error = function(e) NA_integer_)
   se <- setNames(rep(NA_real_, length(omNames)), omNames)
   if (!is.na(n_sub) && n_sub > 1L) {
     for (nm in omNames) {
@@ -1287,8 +1303,8 @@ confint.nlmixr2Profile <- function(object, parm = NULL, level = 0.95, ...) {
   expected <- qchisq(level, df = 1L)
   if (abs(ofvIncrease - expected) > 1e-4) {
     cli::cli_warn(c(
-      "Requested {level * 100}% CI implies ΔOFV = {round(expected, 4)},",
-      "but this profile used ΔOFV = {round(ofvIncrease, 4)}."
+      "Requested {level * 100}% CI implies dOFV = {round(expected, 4)},",
+      "but this profile used dOFV = {round(ofvIncrease, 4)}."
     ))
   }
 

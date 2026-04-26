@@ -509,7 +509,7 @@ test_that("nlmixr2Profile S3 methods - Step 6", {
   expect_equal(ci, ci2)
 
   # confint warns when level implies a different ofvIncrease
-  expect_warning(confint(raw, level = 0.90), regexp = "ΔOFV")
+  expect_warning(confint(raw, level = 0.90), regexp = "dOFV")
 
   # print runs without error
   expect_no_error(capture.output(print(raw)))
@@ -924,6 +924,25 @@ test_that("llpOmegaSE Wishart formula - Step O", {
   expect_equal(computed_se, expected_se, tolerance = 1e-15)
   # Check boundary case: n_sub = 2 (minimum meaningful case)
   expect_equal(sqrt(2 * 0.3^2 / 1L), 0.3 * sqrt(2), tolerance = 1e-10)
+})
+
+test_that("llpOmegaSE uses package-local subject counting", {
+  fit <- list(
+    nsub = 12L,
+    iniDf = data.frame(
+      name = c("eta.ka", "eta.cl"),
+      est = c(0.4, 0.2),
+      ntheta = c(NA, NA),
+      neta1 = c(1, 2),
+      neta2 = c(1, 2),
+      fix = c(FALSE, TRUE)
+    )
+  )
+
+  se <- llpOmegaSE(fit)
+
+  expect_equal(names(se), "eta.ka")
+  expect_equal(se[["eta.ka"]], sqrt(2 * 0.4^2 / (12L - 1L)))
 })
 
 test_that("buildFixedOmegaModel generates function with fix=TRUE - Step O", {

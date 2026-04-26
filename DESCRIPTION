@@ -27,15 +27,14 @@ Imports:
     checkmate,
     cli (>= 3.4.0),
     dplyr,
-    future,
-    future.apply,
     ggplot2,
-    lifecycle,
     nlmixr2est (>= 5.0.0),
     nlmixr2utils,
     rxode2 (>= 5.0.0),
     stats
 Suggests:
+    future,
+    future.apply,
     knitr,
     nlmixr2data,
     rmarkdown,
