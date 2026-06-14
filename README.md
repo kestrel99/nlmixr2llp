@@ -115,7 +115,13 @@ workers without manually orchestrating them.
 ## References
 
 The implementation follows the [PsN LLP workflow](https://github.com/UUPharmacometrics/PsN/releases/download/v5.7.0/llp_userguide.pdf) and related likelihood
-profiling literature, adapted for `nlmixr2` model fits.
+profiling literature, adapted for `nlmixr2` model fits. 
 
 For a worked example, see:
 `vignette("runLLP", package = "nlmixr2llp")`.
+
+## Credit where it's due
+
+`nlmixr2llp` is based on the [PsN implementation](https://github.com/UUPharmacometrics/PsN/releases/download/v5.7.0/llp_userguide.pdf) written by Lars Lindbom, 
+Niclas Jonsson, Pontus Pihlgren, Mats Karlsson, Andrew Hooker, Kajsa Harling, 
+Rikard Nordgren and Svetlana Freiberga.
