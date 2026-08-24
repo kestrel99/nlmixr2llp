@@ -12,7 +12,8 @@ runLLPControl(
   ofvtol = 0.005,
   paramDigits = 3,
   extrapolateExpand = 1.5,
-  workers = NULL
+  workers = NULL,
+  rxThreads = NULL
 )
 }
 \arguments{
@@ -48,6 +49,18 @@ simultaneously.  \code{NULL} (default) or \code{1} runs sequentially without
 requiring any optional packages.  A positive integer greater than 1, or
 \code{"auto"}, uses \code{future} and \code{future.apply}; both packages must be installed
 or profiling aborts with a clear error.}
+
+\item{rxThreads}{Number of rxode2 OpenMP threads to use per worker when
+\code{workers} requests more than one worker.  \code{NULL} (default) uses the
+current \code{rxode2::getRxThreads()} value; \code{"auto"} divides the total core
+count evenly across the effective number of workers; or a positive
+integer.  Whenever more than one worker is involved, \code{workers *
+rxThreads} must not exceed the machine's core count -- \code{runLLP()} aborts
+with an explanatory error before any fitting starts if it would (see
+\code{nlmixr2utils::.withWorkerPlan()}). A single worker is never subject to
+this check.  Since LLP profiling parallelises across parameters rather
+than within a single fit, \code{rxThreads = 1} is usually the right choice
+when \code{workers > 1}.}
 }
 \value{
 A validated list of control options for log-likelihood profiling

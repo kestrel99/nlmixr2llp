@@ -131,6 +131,24 @@ profileNlmixr2FitCoreRet <- function(fitted, which, fixedVal) {
   ret
 }
 
+# Runs `expr()`, returning its result on success. On error, warns with the
+# original condition message and returns a "try-error" object (matching what
+# profileNlmixr2FitCoreRet() expects for a failed refit). Without this, a
+# genuine error during profiling's repeated re-fits (e.g. an upstream
+# nlmixr2est/rxode2 API break) is indistinguishable downstream from an
+# ordinary "did not converge" result -- both silently become an opaque all-NA
+# profile row with no diagnostic.
+llpRefitOrWarn <- function(expr, context) {
+  result <- try(expr(), silent = TRUE)
+  if (inherits(result, "try-error")) {
+    cli::cli_warn(c(
+      "Re-fitting while profiling {context} failed:",
+      "x" = conditionMessage(attr(result, "condition"))
+    ))
+  }
+  result
+}
+
 # Fixed parameter estimate profiling ----
 
 #' Estimate the objective function values for a model while fixing defined
@@ -139,12 +157,18 @@ profileNlmixr2FitCoreRet <- function(fitted, which, fixedVal) {
 #' @inheritParams profile.nlmixr2FitCore
 #' @param which A data.frame with column names of parameters to fix and values
 #'   of the fitted value to fix (one row per set of parameters to estimate)
-#' @param control A list passed to `llpFixedControl()` (currently unused)
+#' @param control A list passed to `llpFixedControl()` (currently unused; any
+#'   named element raises an error rather than being silently ignored)
 #' @inherit profileNlmixr2FitCoreRet return
 #' @author Bill Denney (changed by Matt Fidler to take out R 4.1 specific code)
 #' @family Profiling
 #' @export
 llpProfileFixed <- function(fitted, which, control = list()) {
+  if (length(control) > 0L) {
+    cli::cli_abort(
+      "{.arg control} is not currently used by {.fn llpProfileFixed} (method = \"fixed\"); got {.val {names(control)}}"
+    )
+  }
   control <- do.call(llpFixedControl, control)
   checkmate::assert_data_frame(
     which,
@@ -196,14 +220,18 @@ llpProfileFixedSingle <- function(fitted, which) {
   })
   iniArgs <- append(list(x = fitted), paramToFix)
   modelToFit <- suppressMessages(do.call(rxode2::ini, iniArgs))
-  newFit <-
-    try(suppressMessages(
-      nlmixr2est::nlmixr2(
-        modelToFit,
-        est = fitted$est,
-        control = nlmixr2utils::setQuietFastControl(fitted$control)
+  newFit <- llpRefitOrWarn(
+    function() {
+      suppressMessages(
+        nlmixr2est::nlmixr2(
+          modelToFit,
+          est = fitted$est,
+          control = nlmixr2utils::setQuietFastControl(fitted$control)
+        )
       )
-    ))
+    },
+    context = paste(names(which), "=", unlist(which), collapse = ", ")
+  )
   ret <- profileNlmixr2FitCoreRet(
     fitted = newFit,
     which = paste(names(which), collapse = ",")
@@ -505,6 +533,17 @@ optimProfile <- function(
   list(raw = ret, status = status)
 }
 
+# Identifies whether `which` is a residual-error (sigma) theta rather than a
+# structural one, via iniDf$err (non-NA for residual-error thetas). Presence
+# or absence in fit$cov is not a safe signal for this: nlmixr2est's
+# focei-family covariance now reports full theta+sigma+Omega covariance, so
+# residual-error thetas are routinely present in fit$cov too.
+llpIsResidualErrorTheta <- function(fitted, which) {
+  idf <- fitted$iniDf
+  errVal <- idf[idf$name == which, "err", drop = TRUE]
+  length(errVal) == 1L && !is.na(errVal)
+}
+
 # Run both profile directions for a single parameter, compute the interval
 # ratio, and return list(raw, status).  This is the unit of parallel work in
 # Step 7 (parallelisation over parameters).
@@ -536,12 +575,9 @@ llpRunOneParameter <- function(fitted, which, control) {
     hardUpper = hardUpper
   )
 
-  # Residual-error-as-theta parameters are absent from fit$cov; use wider threshold
+  # Residual-error-as-theta parameters use a wider asymmetry threshold
   isResidualError <- tryCatch(
-    {
-      cov <- fitted$cov
-      !is.null(cov) && !which %in% rownames(cov)
-    },
+    llpIsResidualErrorTheta(fitted, which),
     error = function(e) FALSE
   )
 
@@ -634,15 +670,30 @@ llpNSubjects <- function(fit) {
   cli::cli_abort("Cannot determine subject count from {.arg fit}.")
 }
 
-# Wishart chi-squared approximation for omega diagonal SE.
+# SE for each profileable omega diagonal. Prefers nlmixr2est's reported SE
+# (fit$cov's "om.<etaName>" diagonal, part of the full theta+sigma+Omega
+# covariance) when available, falling back to the Wishart chi-squared
+# approximation otherwise (e.g. no covariance step, or an older nlmixr2est).
 # Returns a named numeric vector with one entry per profileable omega.
 llpOmegaSE <- function(fit) {
   omNames <- llpOmegaNames(fit)
   idf <- fit$iniDf
   n_sub <- tryCatch(llpNSubjects(fit), error = function(e) NA_integer_)
   se <- setNames(rep(NA_real_, length(omNames)), omNames)
-  if (!is.na(n_sub) && n_sub > 1L) {
-    for (nm in omNames) {
+
+  cov <- fit$cov
+  covNames <- if (!is.null(cov)) rownames(cov) else character(0L)
+
+  for (nm in omNames) {
+    covName <- paste0("om.", nm)
+    if (covName %in% covNames) {
+      reported <- sqrt(cov[covName, covName])
+      if (is.finite(reported)) {
+        se[[nm]] <- reported
+        next
+      }
+    }
+    if (!is.na(n_sub) && n_sub > 1L) {
       omega_kk <- idf[idf$name == nm, "est"]
       se[[nm]] <- sqrt(2 * omega_kk^2 / (n_sub - 1L))
     }
@@ -707,14 +758,19 @@ buildFixedOmegaModel <- function(fit, omegaName, fixOmegaVal) {
 profileFixedOmegaSingle <- function(fitted, omegaName, fixOmegaVal, fitData) {
   cli::cli_inform("Profiling {omegaName} = {fixOmegaVal}")
   modelFn <- buildFixedOmegaModel(fitted, omegaName, fixOmegaVal)
-  newFit <- try(suppressMessages(
-    nlmixr2est::nlmixr2(
-      modelFn,
-      data = fitData,
-      est = fitted$est,
-      control = nlmixr2utils::setQuietFastControl(fitted$control)
-    )
-  ))
+  newFit <- llpRefitOrWarn(
+    function() {
+      suppressMessages(
+        nlmixr2est::nlmixr2(
+          modelFn,
+          data = fitData,
+          est = fitted$est,
+          control = nlmixr2utils::setQuietFastControl(fitted$control)
+        )
+      )
+    },
+    context = paste0(omegaName, " = ", fixOmegaVal)
+  )
   ret <- profileNlmixr2FitCoreRet(
     fitted = newFit,
     which = omegaName,
@@ -848,6 +904,17 @@ llpRunOneOmega <- function(fitted, which, control) {
 #'   requiring any optional packages.  A positive integer greater than 1, or
 #'   `"auto"`, uses `future` and `future.apply`; both packages must be installed
 #'   or profiling aborts with a clear error.
+#' @param rxThreads Number of rxode2 OpenMP threads to use per worker when
+#'   `workers` requests more than one worker.  `NULL` (default) uses the
+#'   current `rxode2::getRxThreads()` value; `"auto"` divides the total core
+#'   count evenly across the effective number of workers; or a positive
+#'   integer.  Whenever more than one worker is involved, `workers *
+#'   rxThreads` must not exceed the machine's core count -- `runLLP()` aborts
+#'   with an explanatory error before any fitting starts if it would (see
+#'   `nlmixr2utils::.withWorkerPlan()`). A single worker is never subject to
+#'   this check.  Since LLP profiling parallelises across parameters rather
+#'   than within a single fit, `rxThreads = 1` is usually the right choice
+#'   when `workers > 1`.
 #' @returns A validated list of control options for log-likelihood profiling
 #' @family Profiling
 #' @seealso [runLLP()]
@@ -860,7 +927,8 @@ runLLPControl <- function(
   ofvtol = 0.005,
   paramDigits = 3,
   extrapolateExpand = 1.5,
-  workers = NULL
+  workers = NULL,
+  rxThreads = NULL
 ) {
   checkmate::assert_numeric(
     rseTheta,
@@ -887,6 +955,18 @@ runLLPControl <- function(
       coerce = TRUE
     )
     workers <- as.integer(workers)
+  }
+
+  if (!is.null(rxThreads) && !identical(rxThreads, "auto")) {
+    checkmate::assert_integerish(
+      rxThreads,
+      lower = 1,
+      any.missing = FALSE,
+      len = 1,
+      null.ok = FALSE,
+      coerce = TRUE
+    )
+    rxThreads <- as.integer(rxThreads)
   }
 
   ret <-
@@ -938,7 +1018,8 @@ runLLPControl <- function(
         finite = TRUE,
         null.ok = FALSE
       ),
-      workers = workers
+      workers = workers,
+      rxThreads = rxThreads
     )
   class(ret) <- "runLLPControl"
   ret
@@ -1184,20 +1265,20 @@ runLLP <- function(fit, which = NULL, control = runLLPControl(), ...) {
 
   if (!is.null(workers) && !identical(workers, 1L)) {
     .llpCheckParallelDeps()
+    effectiveRxThreads <- nlmixr2utils::resolveRxThreads(workers, control$rxThreads)
     cli::cli_inform(
-      "Profiling {length(which)} parameter{?s} in parallel (workers = {workers})"
+      "Profiling {length(which)} parameter{?s} in parallel (workers = {workers}, rxThreads = {effectiveRxThreads})"
     )
-    results <- nlmixr2utils::.withWorkerPlan(workers, {
-      # nolint: object_usage_linter.
-      future.apply::future_lapply(
+    results <- nlmixr2utils::.withWorkerPlan(workers, rxThreads = effectiveRxThreads, {
+      nlmixr2utils::.plap(
         which,
         function(w) {
           llpWithIsolatedFitDir(w, function() {
             runOne(w)
           })
         },
-        future.seed = TRUE,
-        future.packages = "nlmixr2llp"
+        rxThreads = effectiveRxThreads,
+        .label = function(w) w
       )
     })
   } else {

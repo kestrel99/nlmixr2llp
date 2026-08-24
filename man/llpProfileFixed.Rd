@@ -16,7 +16,8 @@ llpProfileFixedSingle(fitted, which)
 \item{which}{A data.frame with column names of parameters to fix and values
 of the fitted value to fix (one row only).}
 
-\item{control}{A list passed to \code{llpFixedControl()} (currently unused)}
+\item{control}{A list passed to \code{llpFixedControl()} (currently unused; any
+named element raises an error rather than being silently ignored)}
 }
 \value{
 \code{which} with a column named \code{OFV} added with the objective function

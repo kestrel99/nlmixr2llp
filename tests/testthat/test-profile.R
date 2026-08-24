@@ -78,6 +78,30 @@ test_that("runLLPControl - Step 5 additions", {
   expect_true(any(grepl("workers", deparsed)))
 })
 
+test_that("runLLPControl - rxThreads option", {
+  # Defaults to NULL: .withWorkerPlan()/resolveRxThreads() fall back to the
+  # ambient rxode2::getRxThreads() value when NULL, matching the convention
+  # used by nlmixr2boot::runBootstrap()'s rxThreads argument.
+  expect_null(runLLPControl()$rxThreads)
+
+  # Accepts a positive integer
+  expect_equal(runLLPControl(rxThreads = 1L)$rxThreads, 1L)
+  expect_equal(runLLPControl(rxThreads = 2)$rxThreads, 2L) # coerced to integer
+
+  # Accepts "auto"
+  expect_equal(runLLPControl(rxThreads = "auto")$rxThreads, "auto")
+
+  # Invalid values rejected
+  expect_error(runLLPControl(rxThreads = 0))
+  expect_error(runLLPControl(rxThreads = -1))
+  expect_error(runLLPControl(rxThreads = "parallel"))
+
+  # rxUiDeparse round-trips rxThreads
+  ctrl_modified <- runLLPControl(workers = 2L, rxThreads = 1L)
+  deparsed <- rxUiDeparse.runLLPControl(ctrl_modified, "ctrl")
+  expect_true(any(grepl("rxThreads", deparsed)))
+})
+
 test_that("llpExtractSE - Step 1", {
   one.compartment <- function() {
     ini({
@@ -108,18 +132,23 @@ test_that("llpExtractSE - Step 1", {
   # Returns a named vector with one entry per fixef parameter
   expect_named(se, names(nlmixr2est::fixef(fit)))
 
-  # Structural thetas with covariance step have non-NA SE matching sqrt(diag(cov))
+  # llpExtractSE() reads directly from fit$parFixedDf$SE -- that (not
+  # sqrt(diag(fit$cov))) is its actual contract. The two are no longer
+  # guaranteed to agree to high precision now that fit$cov is the full
+  # theta+sigma+Omega joint covariance rather than a theta-only matrix.
   expect_false(is.na(se["tka"]))
   expect_false(is.na(se["tcl"]))
-  expect_equal(se["tka"], sqrt(diag(fit$cov))["tka"], tolerance = 1e-6)
-  expect_equal(se["tcl"], sqrt(diag(fit$cov))["tcl"], tolerance = 1e-6)
+  expect_equal(se[["tka"]], fit$parFixedDf["tka", "SE"])
+  expect_equal(se[["tcl"]], fit$parFixedDf["tcl", "SE"])
 
   # Fixed parameter has NA SE
   expect_true(is.na(se["tv"]))
 
-  # Residual-error theta (add.sd) without covariance SE is NA
-  # (parFixedDf SE is NA for add.sd even with covMethod = "r")
-  expect_true(is.na(se["add.sd"]))
+  # Residual-error theta (add.sd): nlmixr2est now reports Residual
+  # (error-model) parameter SEs as part of the focei-family covariance, so
+  # this is no longer NA under covMethod = "r".
+  expect_false(is.na(se["add.sd"]))
+  expect_equal(se[["add.sd"]], fit$parFixedDf["add.sd", "SE"])
 
   # Without covariance step, all SEs are NA
   fit_nocov <- suppressMessages(nlmixr2(
@@ -458,6 +487,35 @@ test_that("llpRunOneParameter interval ratio warning - Step 4", {
   expect_false(nextPar <= hard_lo + margin || nextPar >= hard_hi - margin)
 })
 
+test_that("llpIsResidualErrorTheta identifies residual-error thetas via iniDf$err - Step 4", {
+  # nlmixr2est's covariance step now reports full theta+sigma+Omega covariance,
+  # so residual-error thetas (e.g. add.sd) are no longer reliably absent from
+  # fit$cov -- "absent from fit$cov" is not a safe residual-error signal any
+  # more. iniDf$err (non-NA for residual-error thetas, NA for structural
+  # thetas) is the robust signal instead.
+  fit <- list(
+    iniDf = data.frame(
+      name = c("tka", "add.sd"),
+      err = c(NA_character_, "add"),
+      stringsAsFactors = FALSE
+    )
+  )
+  expect_false(llpIsResidualErrorTheta(fit, "tka"))
+  expect_true(llpIsResidualErrorTheta(fit, "add.sd"))
+
+  # Robust even when the theta is present in fit$cov (the scenario that broke
+  # the old "absent from fit$cov" heuristic)
+  fitWithCov <- fit
+  fitWithCov$cov <- matrix(
+    1,
+    2,
+    2,
+    dimnames = list(c("tka", "add.sd"), c("tka", "add.sd"))
+  )
+  expect_true(llpIsResidualErrorTheta(fitWithCov, "add.sd"))
+  expect_false(llpIsResidualErrorTheta(fitWithCov, "tka"))
+})
+
 test_that("nlmixr2Profile S3 methods - Step 6", {
   # Build a minimal mock nlmixr2Profile without running a real fit
   mle_val <- 1.0
@@ -606,6 +664,77 @@ test_that(".withWorkerPlan restores plan after success and error - Step 7", {
   expect_equal(class(future::plan()), orig_class)
 })
 
+test_that("runLLP passes control$rxThreads through to .withWorkerPlan - Step 7", {
+  # Regression test for the nlmixr2utils 0.3 oversubscription guard: when
+  # workers > 1, .withWorkerPlan() aborts if effective workers * effective
+  # rxode2 threads-per-worker exceeds the core count, using the *ambient*
+  # rxode2::getRxThreads() when no rxThreads is passed through explicitly.
+  # runLLP() must forward control$rxThreads so callers can avoid this.
+  skip_if_not_installed("future")
+  skip_if_not_installed("future.apply")
+  skip_if(parallel::detectCores() < 2, "need at least 2 cores")
+
+  # Force the ambient rxode2 thread count as high as possible. If runLLP()
+  # ever fails to forward control$rxThreads to .withWorkerPlan(), the guard
+  # is guaranteed to trip: workers(2) * ambient(detectCores()) > detectCores().
+  origThreads <- rxode2::getRxThreads()
+  on.exit(rxode2::setRxThreads(origThreads), add = TRUE)
+  rxode2::setRxThreads(parallel::detectCores())
+
+  one.compartment <- function() {
+    ini({
+      tka <- log(1.57)
+      tcl <- log(2.72)
+      tv <- fixed(log(31.5))
+      eta.ka ~ 0.6
+      add.sd <- 0.7
+    })
+    model({
+      ka <- exp(tka + eta.ka)
+      cl <- exp(tcl)
+      v <- exp(tv)
+      cp <- linCmt()
+      cp ~ add(add.sd)
+    })
+  }
+
+  fit <- suppressMessages(nlmixr2(
+    one.compartment,
+    data = nlmixr2data::theo_sd,
+    est = "focei",
+    control = list(print = 0)
+  ))
+
+  prof <- suppressMessages(runLLP(
+    fit,
+    which = "tka",
+    control = runLLPControl(workers = 2L, rxThreads = 1L)
+  ))
+  expect_s3_class(prof, "nlmixr2Profile")
+})
+
+test_that("llpRefitOrWarn surfaces the original error message and preserves try-error", {
+  # A refit that fails for a genuine reason (e.g. an upstream nlmixr2est/
+  # rxode2 API break) must surface its error message via a warning, not
+  # vanish silently -- previously `try()` alone made every such failure
+  # indistinguishable downstream from an ordinary "did not converge" result:
+  # both just produced an opaque all-NA profile row with no diagnostic.
+  expect_warning(
+    result <- llpRefitOrWarn(
+      function() stop("simulated upstream API break"),
+      context = "tka = 0.4"
+    ),
+    regexp = "simulated upstream API break"
+  )
+  expect_s3_class(result, "try-error")
+
+  # Successful refits pass through unchanged and silently
+  expect_no_warning(
+    ok <- llpRefitOrWarn(function() 42L, context = "tka = 0.4")
+  )
+  expect_equal(ok, 42L)
+})
+
 test_that("profileNlmixr2FitCoreRet", {
   # Variance and covariance is correctly captured
   one.compartment <- function() {
@@ -678,6 +807,18 @@ test_that("profileNlmixr2FitCoreRet", {
       "eta.cl",
       "cov(eta.cl,eta.ka)"
     )
+  )
+})
+
+test_that("llpProfileFixed gives a clear error for unrecognized control options", {
+  # llpFixedControl() takes no arguments (control is currently unused for
+  # method = "fixed"). Passing any named control option used to fail with R's
+  # raw "unused argument" error from do.call(); this should instead be a
+  # clear, package-consistent cli error -- and should fire before touching
+  # `fitted`/`which`, so no real fit is needed to exercise it.
+  expect_error(
+    llpProfileFixed(fitted = NULL, which = NULL, control = list(itermax = 5)),
+    regexp = "not currently used"
   )
 })
 
@@ -855,7 +996,6 @@ test_that("runLLP profiles non-fixed parameters in a model with correlated etas"
 test_that("llpOmegaNames identifies non-fixed diagonal elements - Step O", {
   skip_if_not_installed("nlmixr2data")
   skip_if_not_installed("nlmixr2est")
-  skip("Requires real fit - slow")
 
   one.compartment <- function() {
     ini({
@@ -880,7 +1020,7 @@ test_that("llpOmegaNames identifies non-fixed diagonal elements - Step O", {
     control = list(print = 0)
   ))
   nms <- llpOmegaNames(fit)
-  expect_character(nms)
+  expect_type(nms, "character")
   expect_true("eta.ka" %in% nms)
   expect_false(any(c("tka", "tcl", "add.sd") %in% nms))
 })
@@ -945,10 +1085,59 @@ test_that("llpOmegaSE uses package-local subject counting", {
   expect_equal(se[["eta.ka"]], sqrt(2 * 0.4^2 / (12L - 1L)))
 })
 
+test_that("llpOmegaSE prefers the reported om.<eta> SE from fit$cov - Step O", {
+  # nlmixr2est's covariance step now reports real Omega SEs (named
+  # `om.<etaName>`) as part of the full theta+sigma+Omega covariance. When
+  # available, this is more accurate than the Wishart chi-squared
+  # approximation and should be preferred.
+  reportedVar <- 0.02 # sqrt(0.02) != the Wishart value below, deliberately
+  fit <- list(
+    nsub = 12L,
+    iniDf = data.frame(
+      name = "eta.ka",
+      est = 0.4,
+      ntheta = NA,
+      neta1 = 1,
+      neta2 = 1,
+      fix = FALSE
+    ),
+    cov = matrix(
+      reportedVar,
+      1,
+      1,
+      dimnames = list("om.eta.ka", "om.eta.ka")
+    )
+  )
+
+  se <- llpOmegaSE(fit)
+
+  expect_equal(se[["eta.ka"]], sqrt(reportedVar))
+  wishartSe <- sqrt(2 * 0.4^2 / (12L - 1L))
+  expect_false(isTRUE(all.equal(se[["eta.ka"]], wishartSe)))
+})
+
+test_that("llpOmegaSE falls back to the Wishart approximation without a reported om.<eta> SE - Step O", {
+  fit <- list(
+    nsub = 12L,
+    iniDf = data.frame(
+      name = "eta.ka",
+      est = 0.4,
+      ntheta = NA,
+      neta1 = 1,
+      neta2 = 1,
+      fix = FALSE
+    ),
+    cov = matrix(1, 1, 1, dimnames = list("tka", "tka")) # no om.eta.ka row
+  )
+
+  se <- llpOmegaSE(fit)
+
+  expect_equal(se[["eta.ka"]], sqrt(2 * 0.4^2 / (12L - 1L)))
+})
+
 test_that("buildFixedOmegaModel generates function with fix=TRUE - Step O", {
   skip_if_not_installed("nlmixr2data")
   skip_if_not_installed("nlmixr2est")
-  skip("Requires real fit - slow")
 
   one.compartment <- function() {
     ini({
@@ -987,7 +1176,6 @@ test_that("buildFixedOmegaModel generates function with fix=TRUE - Step O", {
 test_that("runLLP accepts omega names in which - Step O", {
   skip_if_not_installed("nlmixr2data")
   skip_if_not_installed("nlmixr2est")
-  skip("Requires real fit - slow")
 
   one.compartment <- function() {
     ini({
