@@ -103,6 +103,7 @@ situations; the key options are:
 | `itermax` | 10 | Maximum iterations per bound |
 | `ofvtol` | 0.005 | Convergence tolerance on ΔOFV |
 | `workers` | `NULL` | Sequential; set > 1 for parallel |
+| `rxThreads` | `NULL` | `rxode2` threads per worker (see "Parallel profiling") |
 
 ```{r profile-all}
 ctrl <- runLLPControl(
@@ -179,6 +180,35 @@ parameters to profile, because each parameter can be handled independently.
 Sequential profiling (`workers = NULL` or `workers = 1`) does not require `future` or
 `future.apply`; increasing `workers` trades extra setup overhead for lower wall-clock
 time when the profiling workload is large enough.
+
+`nlmixr2utils::.withWorkerPlan()` (used internally by `runLLP()`) guards against
+requesting more parallel OS threads than the machine has: each worker is a separate
+process running its own independent `rxode2` thread pool, so `workers` multiplied by
+the number of `rxode2` threads used *per worker* must not exceed the number of
+physical cores.  By default each worker uses whatever the *current*
+`rxode2::getRxThreads()` setting is — often the full core count — so requesting
+`workers > 1` without also setting `rxThreads` will typically abort with an
+explanatory error rather than silently oversubscribing the machine.
+
+Since LLP profiling parallelises *across parameters* rather than within a single fit,
+set `rxThreads = 1` whenever `workers > 1`:
+
+```{r profile-parallel, eval = FALSE}
+ctrl_parallel <- runLLPControl(
+  workers   = 2,
+  rxThreads = 1
+)
+
+prof_parallel <- runLLP(
+  fit,
+  which   = c("tka", "tcl", "add.sd", "eta.ka"),
+  control = ctrl_parallel
+)
+```
+
+(This chunk is not evaluated here, to keep the vignette's build time and worker count
+portable across machines, but it is representative of how to enable parallel
+profiling.)
 
 ---
 
